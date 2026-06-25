@@ -1,0 +1,24 @@
+# Terraform cache and providers
+.terraform/
+.terraform.lock.hcl
+
+# State files (use remote state for collaboration)
+terraform.tfstate
+terraform.tfstate.backup
+
+# Variable files that may contain secrets
+*.tfvars
+*.tfvars.json
+
+# Crash logs
+crash.log
+crash.*.log
+
+# Override files
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Scratch files
+nano

@@ -1,0 +1,43 @@
+resource "aws_iam_role_policy" "eks_custom_policy" {
+  name = "eks-custom-inline-policy"
+  role = module.eks.cluster_iam_role_name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "ec2:DescribeInstances"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+# If you want Terraform to own all inline policies on the role, try the definition below
+# Best when you want Terraform to be the single source of truth and prevent any manual or external changes
+
+
+#resource "aws_iam_role_policies_exclusive" "eks_exclusive" {
+#  role_name    = module.eks.cluster_iam_role_name
+#  policy_names = [
+#    aws_iam_role_policy.eks_custom_policy.name
+#  ]
+#}
+
+
+
+
+#Alternatively Add your IAM user to the EKS module: Code goes into the EKS module block in main.tf
+
+#manage_aws_auth = true
+
+#aws_auth_users = [
+#  {
+#    userarn  = "arn:aws:iam::046145782566:user/devops"
+#    username = "admin"
+#    groups   = ["system:masters"]
+#  }
+#]
