@@ -1,6 +1,5 @@
 # Terraform cache and providers
 .terraform/
-.terraform.lock.hcl
 
 # State files (use remote state for collaboration)
 terraform.tfstate
