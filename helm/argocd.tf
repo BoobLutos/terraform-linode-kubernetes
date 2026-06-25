@@ -10,7 +10,7 @@ resource "helm_release" "argocd" {
   namespace  = kubernetes_namespace_v1.argocd.metadata[0].name
   repository = "https://argoproj.github.io/argo-helm"
   chart      = "argo-cd"
-  version    = "6.7.12" # example version
+  version    = "6.7.12"
 
   set = [
     {
@@ -32,11 +32,17 @@ resource "kubernetes_ingress_v1" "argocd" {
     namespace = kubernetes_namespace_v1.argocd.metadata[0].name
     annotations = {
       "nginx.ingress.kubernetes.io/backend-protocol" = "HTTP"
+      "cert-manager.io/cluster-issuer"               = "letsencrypt-prod"
     }
   }
 
   spec {
     ingress_class_name = "nginx"
+
+    tls {
+      hosts       = ["argocd.sinza.org"]
+      secret_name = "argocd-tls"
+    }
 
     rule {
       host = "argocd.sinza.org"
@@ -59,5 +65,5 @@ resource "kubernetes_ingress_v1" "argocd" {
     }
   }
 
-  depends_on = [helm_release.argocd]
+  depends_on = [helm_release.argocd, kubectl_manifest.letsencrypt_prod]
 }

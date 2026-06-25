@@ -27,5 +27,6 @@ module "helm" {
   providers = {
     kubernetes = kubernetes
     helm       = helm
+    kubectl    = kubectl
   }
 }
