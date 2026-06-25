@@ -3,7 +3,7 @@
 # -------------------------
 resource "linode_lke_cluster" "this" {
   label       = var.cluster_name
-  k8s_version = "1.32"
+  k8s_version = "1.35"
   region      = var.region
 
   pool {
