@@ -28,5 +28,6 @@ module "helm" {
     kubernetes = kubernetes
     helm       = helm
     kubectl    = kubectl
+    random     = random
   }
 }
