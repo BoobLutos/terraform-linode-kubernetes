@@ -1,37 +1,38 @@
-# -------------------------
-# LKE CLUSTER
-# -------------------------
-resource "linode_lke_cluster" "this" {
-  label       = var.cluster_name
-  k8s_version = "1.35"
-  region      = var.region
+locals {
+  label = "${var.name}-${var.environment}"
 
-  pool {
-    type  = "g6-standard-1"
-    count = 2
+  tags = distinct(concat(
+    ["managed-by:terraform", "env:${var.environment}", "cluster:${local.label}"],
+    var.extra_tags,
+  ))
+}
+
+resource "linode_lke_cluster" "this" {
+  label       = local.label
+  k8s_version = var.k8s_version
+  region      = var.region
+  tags        = local.tags
+
+  control_plane {
+    high_availability = var.high_availability
   }
 
-  tags = [var.cluster_name]
-}
+  dynamic "pool" {
+    for_each = var.node_pools
 
-locals {
-  kube_config = yamldecode(base64decode(linode_lke_cluster.this.kubeconfig))
-}
+    content {
+      type  = pool.value.type
+      count = pool.value.count
+      tags  = local.tags
 
-# -------------------------
-# HELM MODULE
-# -------------------------
-module "helm" {
-  source = "./helm"
+      dynamic "autoscaler" {
+        for_each = pool.value.autoscaler == null ? [] : [pool.value.autoscaler]
 
-  brevo_smtp_login = var.brevo_smtp_login
-  brevo_smtp_key   = var.brevo_smtp_key
-  n8n_smtp_sender  = var.n8n_smtp_sender
-
-  providers = {
-    kubernetes = kubernetes
-    helm       = helm
-    kubectl    = kubectl
-    random     = random
+        content {
+          min = autoscaler.value.min
+          max = autoscaler.value.max
+        }
+      }
+    }
   }
 }

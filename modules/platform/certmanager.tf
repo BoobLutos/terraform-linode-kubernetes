@@ -3,7 +3,7 @@ resource "helm_release" "cert_manager" {
   namespace  = "cert-manager"
   repository = "https://charts.jetstack.io"
   chart      = "cert-manager"
-  version    = "v1.20.3"
+  version    = var.chart_versions.cert_manager
 
   create_namespace = true
 
@@ -24,7 +24,7 @@ resource "kubectl_manifest" "letsencrypt_prod" {
     spec:
       acme:
         server: https://acme-v02.api.letsencrypt.org/directory
-        email: lutaayab@gmail.com
+        email: ${var.acme_email}
         privateKeySecretRef:
           name: letsencrypt-prod
         solvers:

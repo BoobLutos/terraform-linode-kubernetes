@@ -1,0 +1,49 @@
+name: module-ci
+
+# Runs on every PR and on main. Publishing is handled by HCP Terraform's private
+# registry, which picks up new semver tags (e.g. v1.2.0) automatically.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~1.16"
+          terraform_wrapper: false
+
+      - name: terraform fmt
+        run: terraform fmt -check -recursive
+
+      - name: terraform validate (root module)
+        run: |
+          terraform init -backend=false -input=false
+          terraform validate
+
+      - name: terraform test (mocked provider, no cloud account needed)
+        run: terraform test
+
+      - name: terraform validate and test (modules/platform)
+        working-directory: modules/platform
+        run: |
+          terraform init -backend=false -input=false
+          terraform validate
+          terraform test
+
+      - uses: terraform-linters/setup-tflint@v4
+
+      - name: tflint
+        run: |
+          tflint --init
+          tflint --recursive --format compact
+        env:
+          GITHUB_TOKEN: ${{ github.token }}

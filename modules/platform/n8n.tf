@@ -9,9 +9,7 @@ resource "helm_release" "n8n" {
   namespace  = kubernetes_namespace_v1.n8n.metadata[0].name
   repository = "https://community-charts.github.io/helm-charts"
   chart      = "n8n"
-  version    = "1.24.0"
-
-  create_namespace = false
+  version    = var.chart_versions.n8n
 
   timeout = 600
 
@@ -22,23 +20,24 @@ resource "helm_release" "n8n" {
     },
     {
       name  = "main.persistence.size"
-      value = "5Gi"
+      value = var.n8n_persistence_size
     },
     {
+      # The data volume is ReadWriteOnce; a rolling update would deadlock on it.
       name  = "strategy.type"
       value = "Recreate"
     },
     {
       name  = "main.editorBaseUrl"
-      value = "https://n8n.sinza.org"
+      value = "https://${var.n8n_host}"
     },
     {
       name  = "webhook.url"
-      value = "https://n8n.sinza.org"
+      value = "https://${var.n8n_host}"
     },
     {
       name  = "main.extraEnvVars.N8N_HOST"
-      value = "n8n.sinza.org"
+      value = var.n8n_host
     },
     {
       name  = "main.extraEnvVars.N8N_PROTOCOL"
@@ -50,37 +49,43 @@ resource "helm_release" "n8n" {
     },
     {
       name  = "main.extraEnvVars.N8N_SMTP_HOST"
-      value = "smtp-relay.brevo.com"
+      value = var.smtp_host
     },
     {
-      # Linode blocks outbound 25/465/587 by default (anti-spam policy); Brevo's
-      # relay also listens on 2525, which isn't blocked.
       name  = "main.extraEnvVars.N8N_SMTP_PORT"
-      value = "2525"
+      value = tostring(var.smtp_port)
     },
     {
-      # STARTTLS on 2525, not implicit TLS — leave false per Brevo's relay requirements.
+      # STARTTLS on 2525, not implicit TLS, per Brevo's relay requirements.
       name  = "main.extraEnvVars.N8N_SMTP_SSL"
       value = "false"
     },
     {
       name  = "main.extraEnvVars.N8N_SMTP_USER"
-      value = var.brevo_smtp_login
+      value = var.smtp_user
     },
     {
       name  = "main.extraEnvVars.N8N_SMTP_SENDER"
-      value = var.n8n_smtp_sender
+      value = var.smtp_sender
     }
   ]
 
-  set_sensitive = [
-    {
-      name  = "main.extraEnvVars.N8N_SMTP_PASS"
-      value = var.brevo_smtp_key
-    }
-  ]
+  set_sensitive = concat(
+    [
+      {
+        name  = "main.extraEnvVars.N8N_SMTP_PASS"
+        value = var.smtp_password
+      }
+    ],
+    var.n8n_encryption_key == null ? [] : [
+      {
+        name  = "encryptionKey"
+        value = var.n8n_encryption_key
+      }
+    ],
+  )
 
-  depends_on = [kubernetes_namespace_v1.n8n, helm_release.nginx_ingress]
+  depends_on = [helm_release.nginx_ingress]
 }
 
 resource "kubernetes_ingress_v1" "n8n" {
@@ -97,12 +102,12 @@ resource "kubernetes_ingress_v1" "n8n" {
     ingress_class_name = "nginx"
 
     tls {
-      hosts       = ["n8n.sinza.org"]
+      hosts       = [var.n8n_host]
       secret_name = "n8n-tls"
     }
 
     rule {
-      host = "n8n.sinza.org"
+      host = var.n8n_host
 
       http {
         path {
