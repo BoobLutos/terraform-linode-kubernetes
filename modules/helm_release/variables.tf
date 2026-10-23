@@ -4,8 +4,8 @@ variable "name" {
 }
 
 variable "namespace" {
-  type        = string
-  default     = "default"
+  type    = string
+  default = "default"
 }
 
 variable "repository" {

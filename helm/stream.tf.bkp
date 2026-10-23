@@ -1,0 +1,387 @@
+# -------------------------
+# REAL-TIME STREAMING ANALYTICS PIPELINE
+# -------------------------
+# Three Go microservices that ingest live crypto trades from a public exchange
+# WebSocket, push them through the Kafka broker defined in kafka.tf, aggregate
+# them into one-second tumbling windows, and serve a live dashboard over
+# Server-Sent Events at https://mydash.sinza.org.
+#
+#   ingestor  --> crypto.trades --> processor --> crypto.metrics --> api --> SSE
+#                                        \--> crypto.trades.dlq --------/
+#
+# Source lives at /home/lutos/stream; images are built and pushed by its
+# build.sh. Requests are deliberately tight — the two original g6-standard-1
+# nodes were already at 96% CPU requests, which is what caused the repeated
+# kafka-ui and n8n evictions.
+
+locals {
+  stream_namespace = "stream"
+  stream_host      = "mydash.sinza.org"
+  stream_registry  = "docker.io/booblutos"
+  stream_tag       = "v1"
+
+  # Coinbase is the primary feed: Binance answers HTTP 451 from Linode's
+  # us-east region, so it is not usable here. The ingestor falls back to Kraken
+  # by itself after repeated connection failures.
+  stream_symbols = "BTC-USD,ETH-USD,SOL-USD"
+  stream_feed    = "coinbase"
+
+  # Shared environment for all three services. Each Deployment adds only what
+  # differs.
+  stream_env = {
+    KAFKA_BROKERS = "kafka.kafka.svc.cluster.local:9092"
+    SYMBOLS       = local.stream_symbols
+    FEED_SOURCE   = local.stream_feed
+    WINDOW_MS     = "1000"
+    LOG_LEVEL     = "info"
+  }
+}
+
+resource "kubernetes_namespace_v1" "stream" {
+  metadata {
+    name = local.stream_namespace
+  }
+}
+
+# The pipeline authenticates with the same SASL/PLAIN client credentials the
+# Kafka chart was given, rather than a second set — random_password.kafka_sasl
+# is the single source of truth for both.
+resource "kubernetes_secret_v1" "stream_kafka" {
+  metadata {
+    name      = "stream-kafka"
+    namespace = kubernetes_namespace_v1.stream.metadata[0].name
+  }
+
+  data = {
+    KAFKA_SASL_USER     = local.kafka_sasl_username
+    KAFKA_SASL_PASSWORD = random_password.kafka_sasl.result
+  }
+
+  type = "Opaque"
+}
+
+# -------------------------
+# INGESTOR
+# -------------------------
+resource "kubernetes_deployment_v1" "stream_ingestor" {
+  metadata {
+    name      = "stream-ingestor"
+    namespace = kubernetes_namespace_v1.stream.metadata[0].name
+    labels    = { app = "stream-ingestor", part-of = "stream" }
+  }
+
+  spec {
+    replicas = 1
+
+    selector {
+      match_labels = { app = "stream-ingestor" }
+    }
+
+    # A second ingestor would double-produce every trade — the exchange feed is
+    # not partitioned — so this deployment is deliberately single-replica and
+    # replaces rather than surges on rollout.
+    strategy {
+      type = "Recreate"
+    }
+
+    template {
+      metadata {
+        labels = { app = "stream-ingestor", part-of = "stream" }
+      }
+
+      spec {
+        container {
+          name  = "ingestor"
+          image = "${local.stream_registry}/stream-ingestor:${local.stream_tag}"
+
+          port {
+            name           = "http"
+            container_port = 8080
+          }
+
+          dynamic "env" {
+            for_each = local.stream_env
+            content {
+              name  = env.key
+              value = env.value
+            }
+          }
+
+          env_from {
+            secret_ref {
+              name = kubernetes_secret_v1.stream_kafka.metadata[0].name
+            }
+          }
+
+          resources {
+            requests = { cpu = "50m", memory = "48Mi" }
+            limits   = { memory = "128Mi" }
+          }
+
+          liveness_probe {
+            http_get {
+              path = "/healthz"
+              port = "http"
+            }
+            initial_delay_seconds = 10
+            period_seconds        = 20
+          }
+
+          # Readiness follows the trade flow, not just the socket: a connected
+          # but silent feed is still a broken pipeline.
+          readiness_probe {
+            http_get {
+              path = "/readyz"
+              port = "http"
+            }
+            initial_delay_seconds = 15
+            period_seconds        = 10
+            failure_threshold     = 6
+          }
+        }
+      }
+    }
+  }
+
+  depends_on = [helm_release.kafka]
+}
+
+# -------------------------
+# PROCESSOR
+# -------------------------
+resource "kubernetes_deployment_v1" "stream_processor" {
+  metadata {
+    name      = "stream-processor"
+    namespace = kubernetes_namespace_v1.stream.metadata[0].name
+    labels    = { app = "stream-processor", part-of = "stream" }
+  }
+
+  spec {
+    replicas = 1
+
+    selector {
+      match_labels = { app = "stream-processor" }
+    }
+
+    # Recreate rather than RollingUpdate: two members briefly sharing the
+    # consumer group would trigger a rebalance and duplicate a window.
+    strategy {
+      type = "Recreate"
+    }
+
+    template {
+      metadata {
+        labels = { app = "stream-processor", part-of = "stream" }
+      }
+
+      spec {
+        container {
+          name  = "processor"
+          image = "${local.stream_registry}/stream-processor:${local.stream_tag}"
+
+          port {
+            name           = "http"
+            container_port = 8080
+          }
+
+          dynamic "env" {
+            for_each = local.stream_env
+            content {
+              name  = env.key
+              value = env.value
+            }
+          }
+
+          env_from {
+            secret_ref {
+              name = kubernetes_secret_v1.stream_kafka.metadata[0].name
+            }
+          }
+
+          resources {
+            requests = { cpu = "100m", memory = "64Mi" }
+            limits   = { memory = "192Mi" }
+          }
+
+          liveness_probe {
+            http_get {
+              path = "/healthz"
+              port = "http"
+            }
+            initial_delay_seconds = 10
+            period_seconds        = 20
+          }
+
+          readiness_probe {
+            http_get {
+              path = "/readyz"
+              port = "http"
+            }
+            initial_delay_seconds = 10
+            period_seconds        = 10
+            failure_threshold     = 6
+          }
+        }
+      }
+    }
+  }
+
+  depends_on = [helm_release.kafka, kubernetes_deployment_v1.stream_ingestor]
+}
+
+# -------------------------
+# API + DASHBOARD
+# -------------------------
+resource "kubernetes_deployment_v1" "stream_api" {
+  metadata {
+    name      = "stream-api"
+    namespace = kubernetes_namespace_v1.stream.metadata[0].name
+    labels    = { app = "stream-api", part-of = "stream" }
+  }
+
+  spec {
+    replicas = 1
+
+    selector {
+      match_labels = { app = "stream-api" }
+    }
+
+    # Single replica: each pod holds its own in-memory projection and its own
+    # SSE clients, so a second replica would serve a different view of the same
+    # topic depending on which one the ingress picked.
+    strategy {
+      type = "Recreate"
+    }
+
+    template {
+      metadata {
+        labels = { app = "stream-api", part-of = "stream" }
+      }
+
+      spec {
+        container {
+          name  = "api"
+          image = "${local.stream_registry}/stream-api:${local.stream_tag}"
+
+          port {
+            name           = "http"
+            container_port = 8080
+          }
+
+          dynamic "env" {
+            for_each = local.stream_env
+            content {
+              name  = env.key
+              value = env.value
+            }
+          }
+
+          env_from {
+            secret_ref {
+              name = kubernetes_secret_v1.stream_kafka.metadata[0].name
+            }
+          }
+
+          resources {
+            requests = { cpu = "80m", memory = "64Mi" }
+            limits   = { memory = "192Mi" }
+          }
+
+          liveness_probe {
+            http_get {
+              path = "/healthz"
+              port = "http"
+            }
+            initial_delay_seconds = 10
+            period_seconds        = 20
+          }
+
+          readiness_probe {
+            http_get {
+              path = "/readyz"
+              port = "http"
+            }
+            initial_delay_seconds = 5
+            period_seconds        = 10
+            failure_threshold     = 6
+          }
+        }
+      }
+    }
+  }
+
+  depends_on = [helm_release.kafka]
+}
+
+resource "kubernetes_service_v1" "stream_api" {
+  metadata {
+    name      = "stream-api"
+    namespace = kubernetes_namespace_v1.stream.metadata[0].name
+    labels    = { app = "stream-api" }
+  }
+
+  spec {
+    selector = { app = "stream-api" }
+
+    port {
+      name        = "http"
+      port        = 80
+      target_port = "http"
+    }
+
+    type = "ClusterIP"
+  }
+}
+
+resource "kubernetes_ingress_v1" "stream_dashboard" {
+  metadata {
+    name      = "stream-dashboard"
+    namespace = kubernetes_namespace_v1.stream.metadata[0].name
+
+    annotations = {
+      "nginx.ingress.kubernetes.io/backend-protocol" = "HTTP"
+      "cert-manager.io/cluster-issuer"               = "letsencrypt-prod"
+
+      # Server-Sent Events need buffering off and a long read timeout, or nginx
+      # accumulates frames and closes the stream every 60 seconds.
+      "nginx.ingress.kubernetes.io/proxy-buffering"    = "off"
+      "nginx.ingress.kubernetes.io/proxy-read-timeout" = "3600"
+      "nginx.ingress.kubernetes.io/proxy-send-timeout" = "3600"
+    }
+  }
+
+  spec {
+    ingress_class_name = "nginx"
+
+    tls {
+      hosts       = [local.stream_host]
+      secret_name = "stream-dashboard-tls"
+    }
+
+    rule {
+      host = local.stream_host
+
+      http {
+        path {
+          path      = "/"
+          path_type = "Prefix"
+
+          backend {
+            service {
+              name = kubernetes_service_v1.stream_api.metadata[0].name
+              port {
+                number = 80
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  depends_on = [
+    kubernetes_service_v1.stream_api,
+    kubectl_manifest.letsencrypt_prod,
+    helm_release.nginx_ingress,
+  ]
+}

@@ -7,7 +7,7 @@ resource "linode_lke_cluster" "this" {
   region      = var.region
 
   pool {
-    type  = "g6-standard-2"
+    type  = "g6-standard-1"
     count = 2
   }
 
@@ -23,6 +23,10 @@ locals {
 # -------------------------
 module "helm" {
   source = "./helm"
+
+  brevo_smtp_login = var.brevo_smtp_login
+  brevo_smtp_key   = var.brevo_smtp_key
+  n8n_smtp_sender  = var.n8n_smtp_sender
 
   providers = {
     kubernetes = kubernetes
