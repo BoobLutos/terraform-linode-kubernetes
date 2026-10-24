@@ -38,8 +38,13 @@ run "hostnames_wired_through" {
   }
 
   assert {
-    condition     = length(helm_release.n8n.set_sensitive) == 1
-    error_message = "Without n8n_encryption_key only the SMTP password should be a sensitive value."
+    condition     = length(kubernetes_secret_v1.n8n_encryption_key) == 0
+    error_message = "Without n8n_encryption_key no key secret should be created."
+  }
+
+  assert {
+    condition     = !contains([for s in helm_release.n8n.set : s.name], "existingEncryptionKeySecret")
+    error_message = "Without n8n_encryption_key the chart should manage its own key."
   }
 
   assert {
@@ -63,8 +68,18 @@ run "restore_key_and_applications" {
   }
 
   assert {
-    condition     = contains([for s in helm_release.n8n.set_sensitive : s.name], "encryptionKey")
-    error_message = "n8n_encryption_key should set the chart's encryptionKey."
+    condition     = kubernetes_secret_v1.n8n_encryption_key[0].data["N8N_ENCRYPTION_KEY"] == "old-key"
+    error_message = "n8n_encryption_key should be stored in the n8n-encryption-key secret."
+  }
+
+  assert {
+    condition     = one([for s in helm_release.n8n.set : s.value if s.name == "existingEncryptionKeySecret"]) == "n8n-encryption-key"
+    error_message = "The chart should read the key from the n8n-encryption-key secret."
+  }
+
+  assert {
+    condition     = !contains([for s in helm_release.n8n.set_sensitive : s.name], "encryptionKey")
+    error_message = "The chart's encryptionKey value should not be used; the chart ignores it on upgrade."
   }
 
   assert {

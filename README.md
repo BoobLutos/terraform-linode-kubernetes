@@ -98,7 +98,7 @@ After the first apply, point the DNS A records for both hostnames at the `ingres
 | `smtp_sender` | string | — | Verified sender address |
 | `smtp_host` | string | `"smtp-relay.brevo.com"` | SMTP relay |
 | `smtp_port` | number | `2525` | Linode blocks 25/465/587 by default |
-| `n8n_encryption_key` | string (sensitive) | `null` | Set to the old key when restoring an n8n database; leave null on a fresh install |
+| `n8n_encryption_key` | string (sensitive) | `null` | Set to the old key when restoring an n8n database; leave null on a fresh install. Once set, keep it set |
 | `n8n_persistence_size` | string | `"10Gi"` | n8n data volume (Linode minimum is 10Gi) |
 | `argocd_applications` | map(object) | `{}` | Argo CD Applications: `repo_url`, `path`, `destination_namespace`, optional `target_revision`, `project`, `automated_sync` |
 | `chart_versions` | object | tested pins | Override `argocd`, `cert_manager`, `ingress_nginx` or `n8n` chart versions |

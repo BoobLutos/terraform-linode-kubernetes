@@ -33,7 +33,7 @@ variable "n8n_persistence_size" {
 }
 
 variable "n8n_encryption_key" {
-  description = "Key n8n encrypts stored credentials with. Leave null on a fresh install (the chart generates one); set it to the old key when restoring an existing n8n database."
+  description = "Key n8n encrypts stored credentials with, stored in the n8n-encryption-key secret. Leave null to let the chart generate one. Set it to the old key when restoring an existing n8n database, and keep it set afterwards: removing it makes the chart generate a new key."
   type        = string
   default     = null
   sensitive   = true
