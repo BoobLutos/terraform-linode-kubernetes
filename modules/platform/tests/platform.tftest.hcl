@@ -92,3 +92,16 @@ run "restore_key_and_applications" {
     error_message = "Automated sync should be on by default."
   }
 }
+
+run "settings_visible_in_plans" {
+  command = plan
+
+  variables {
+    n8n_encryption_key = "old-key"
+  }
+
+  assert {
+    condition     = !issensitive(helm_release.n8n.set)
+    error_message = "n8n's non-secret chart settings should stay readable in plans."
+  }
+}

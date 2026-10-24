@@ -72,7 +72,9 @@ resource "helm_release" "n8n" {
     ],
     # The chart's encryptionKey value is ignored once its own key secret
     # exists (it reuses that secret on upgrade), so pass our own secret instead.
-    var.n8n_encryption_key == null ? [] : [
+    # Whether a key is set isn't secret; without nonsensitive() the whole list
+    # would be hidden in plans.
+    nonsensitive(var.n8n_encryption_key == null) ? [] : [
       {
         name  = "existingEncryptionKeySecret"
         value = kubernetes_secret_v1.n8n_encryption_key[0].metadata[0].name
@@ -91,7 +93,7 @@ resource "helm_release" "n8n" {
 }
 
 resource "kubernetes_secret_v1" "n8n_encryption_key" {
-  count = var.n8n_encryption_key == null ? 0 : 1
+  count = nonsensitive(var.n8n_encryption_key == null) ? 0 : 1
 
   metadata {
     name      = "n8n-encryption-key"
